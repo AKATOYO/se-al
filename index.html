@@ -1,42 +1,20 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prensa Alternativa - Transmisión en Vivo</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <header>
-        <h1>Prensa Alternativa</h1>
-        <p>Transmisión ciudadana en directo</p>
-    </header>
+<!-- Add this inside the <main> tag, after the stream-container section -->
+<section class="signaling-container">
+    <h2>Conexión Remota</h2>
+    
+    <div>
+        <button id="createOfferBtn">Crear Oferta (Emisor)</button>
+        <textarea id="localDescription" placeholder="Oferta/Respuesta Local" rows="4"></textarea>
+        <button id="copyLocalBtn">Copiar Link Local</button>
+    </div>
 
-    <main>
-        <section class="stream-container">
-            <div class="video-wrapper">
-                <h2>Tu Señal (Local)</h2>
-                <video id="localVideo" autoplay muted playsinline></video>
-            </div>
-            <div class="video-wrapper">
-                <h2>Señal Recibida (Remoto)</h2>
-                <video id="remoteVideo" autoplay playsinline></video>
-            </div>
-        </section>
+    <div>
+        <textarea id="remoteDescription" placeholder="Pegar Oferta/Respuesta Remota aquí" rows="4"></textarea>
+        <button id="acceptOfferBtn">Aceptar Oferta (Receptor)</button>
+    </div>
 
-        <section class="controls">
-            <button id="startStreamBtn">Iniciar Transmisión</button>
-            <button id="startRecordBtn" disabled>Grabar Transmisión</button>
-            <button id="stopRecordBtn" disabled>Detener Grabación</button>
-        </section>
-
-        <section class="recording-output">
-            <h2>Grabación Guardada</h2>
-            <video id="recordedVideo" controls></video>
-            <a id="downloadLink" download="prensa_alternativa.webm" style="display: none;">Descargar Grabación</a>
-        </section>
-    </main>
-
-    <script src="script.js"></script>
-</body>
-</html>
+    <div>
+        <textarea id="iceCandidateInput" placeholder="Pegar Candidato ICE Remoto aquí" rows="2"></textarea>
+        <button id="addIceBtn">Agregar Candidato ICE</button>
+    </div>
+</section>
