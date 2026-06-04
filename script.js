@@ -1,152 +1,188 @@
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
+const remoteStatus = document.getElementById('remoteStatus');
 const startStreamBtn = document.getElementById('startStreamBtn');
 const stopStreamBtn = document.getElementById('stopStreamBtn');
 const startRecordBtn = document.getElementById('startRecordBtn');
 const stopRecordBtn = document.getElementById('stopRecordBtn');
 const recordedVideo = document.getElementById('recordedVideo');
 const downloadLink = document.getElementById('downloadLink');
-const statusIndicator = document.getElementById('statusIndicator');
+
+// Elementos NUEVOS para conexión remota
+const generateLinkBtn = document.getElementById('generateLinkBtn');
+const copyLinkBtn = document.getElementById('copyLinkBtn');
+const connectionCode = document.getElementById('connectionCode');
+const connectBtn = document.getElementById('connectBtn');
 
 let localStream;
 let mediaRecorder;
 let recordedChunks = [];
-
-// WebRTC Configuration
-const config = { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] };
 let peerConnection;
 
-// Helper to update UI status
-function updateStatus(text, className) {
-    statusIndicator.textContent = text;
-    statusIndicator.className = className;
-}
+// Servidores para conectar desde cualquier red
+const config = { 
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' }
+    ] 
+};
 
-// Start streaming (Get Camera & Mic)
+// ==============================================
+// LÓGICA PRINCIPAL DE TRANSMISIÓN
+// ==============================================
 startStreamBtn.addEventListener('click', async () => {
     try {
-        // Request camera and microphone
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        // Obtener cámara y micrófono con buena calidad
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+            audio: { echoCancellation: true, noiseSuppression: true } 
+        });
+        
         localVideo.srcObject = localStream;
         
+        // Habilitar botones
         startStreamBtn.disabled = true;
         stopStreamBtn.disabled = false;
         startRecordBtn.disabled = false;
-        
-        updateStatus('En Vivo', 'status-live');
-        setupPeerConnection();
+        generateLinkBtn.disabled = false; // Ya se puede generar código
+        connectBtn.disabled = false;
+
+        initPeerConnection(); // Preparar conexión
+
     } catch (error) {
-        console.error('Error accessing media devices.', error);
-        alert('No se pudo acceder a la cámara o micrófono.');
+        console.error('Error:', error);
+        alert('❌ No se pudo acceder a la cámara o micrófono. Revisa los permisos.');
     }
 });
 
-// Stop streaming (Release Camera & Mic)
 stopStreamBtn.addEventListener('click', () => {
-    stopMediaTracks();
-    
+    // Detener video y audio
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    localVideo.srcObject = null;
+    remoteVideo.srcObject = null;
+
+    // Cerrar conexión remota
+    if (peerConnection) peerConnection.close();
+
+    // Detener grabación si está activa
+    if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+
+    // Reiniciar todo
+    peerConnection = null;
+    connectionCode.value = "";
+    copyLinkBtn.style.display = 'none';
+    remoteStatus.textContent = "Desconectado";
+    remoteStatus.classList.remove('connected');
+
+    // Deshabilitar botones
     startStreamBtn.disabled = false;
     stopStreamBtn.disabled = true;
     startRecordBtn.disabled = true;
     stopRecordBtn.disabled = true;
-    
-    updateStatus('Esperando', 'status-idle');
+    generateLinkBtn.disabled = true;
+    connectBtn.disabled = true;
 });
 
-function stopMediaTracks() {
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        localVideo.srcObject = null;
-    }
-    if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-    }
-    // Stop recording if it's running
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-    }
-}
+// ==============================================
+// 🔹 SISTEMA DE CONEXIÓN REMOTA (GENERAR LINK/CODIGO)
+// ==============================================
 
-function setupPeerConnection() {
+// Inicializar la conexión WebRTC
+function initPeerConnection() {
     peerConnection = new RTCPeerConnection(config);
 
-    // Add local tracks to the connection
+    // Enviar mi video/audio al otro dispositivo
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-    // Receive remote tracks
+    // Recibir el video/audio del otro dispositivo
     peerConnection.ontrack = event => {
-        remoteVideo.srcObject = event.streams[0];
+        if (event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+            remoteStatus.textContent = "✅ CONECTADO";
+            remoteStatus.classList.add('connected');
+        }
     };
 
-    console.warn("NOTA: Para conectar dos dispositivos, necesitas un servidor de señalización (WebSockets) para intercambiar ofertas SDP y candidatos ICE.");
-}
-
-// Function to find a supported MIME type for recording
-function getSupportedMimeType() {
-    const types = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm;codecs=h264,opus',
-        'video/webm',
-        'video/mp4'
-    ];
-    for (let type of types) {
-        if (MediaRecorder.isTypeSupported(type)) {
-            return type;
+    // Cuando se generan los datos para conectar
+    peerConnection.onicecandidate = event => {
+        // Cuando ya tenemos todos los datos necesarios
+        if (!event.candidate) {
+            // Convertimos los datos a texto codificado para que sea fácil de copiar/pegar
+            const connectionData = btoa(JSON.stringify(peerConnection.localDescription));
+            connectionCode.value = connectionData;
+            copyLinkBtn.style.display = 'inline-block'; // Mostrar botón de copiar
         }
-    }
-    return ''; // Let the browser decide
+    };
 }
 
-// Recording Logic
+// Generar el código de conexión
+generateLinkBtn.addEventListener('click', async () => {
+    if (!peerConnection) initPeerConnection();
+
+    try {
+        // Creamos la oferta para conectarse
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        alert("🔑 Código generado! Copialo y envíalo a quien quieras que te vea.");
+    } catch (e) {
+        alert("Error al generar el código: " + e.message);
+    }
+});
+
+// Copiar código al portapapeles
+copyLinkBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(connectionCode.value)
+        .then(() => alert("📋 Código copiado al portapapeles!"))
+        .catch(() => alert("No se pudo copiar, selecciónalo manualmente."));
+});
+
+// Conectar usando un código recibido
+connectBtn.addEventListener('click', async () => {
+    const codigoIngresado = connectionCode.value.trim();
+    if (!codigoIngresado) {
+        alert("⚠️ Pega primero el código que te enviaron.");
+        return;
+    }
+
+    try {
+        // Decodificamos el texto
+        const signal = JSON.parse(atob(codigoIngresado));
+
+        if (!peerConnection) initPeerConnection();
+
+        // Enviamos nuestros datos al otro dispositivo
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+
+        // Si lo que recibimos es una petición, generamos nuestra respuesta automáticamente
+        if (signal.type === 'offer') {
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            alert("🔄 Respuesta lista! Ahora copia el código nuevo que aparezca y envíaselo de vuelta.");
+        }
+
+    } catch (e) {
+        alert("❌ Código inválido o error al conectar. Verifica que sea el texto correcto.");
+        console.error(e);
+    }
+});
+
+// ==============================================
+// LÓGICA DE GRABACIÓN
+// ==============================================
 startRecordBtn.addEventListener('click', () => {
     recordedChunks = [];
-    const mimeType = getSupportedMimeType();
-    const options = mimeType ? { mimeType } : {};
+    let options;
+
+    // Buscar códec compatible
+    const tipos = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    for (let t of tipos) if (MediaRecorder.isTypeSupported(t)) options = { mimeType: t };
 
     try {
         mediaRecorder = new MediaRecorder(localStream, options);
     } catch (e) {
-        console.error('MediaRecorder failed', e);
-        alert('Tu navegador no soporta la grabación de video.');
-        return;
+        mediaRecorder = new MediaRecorder(localStream);
     }
 
-    mediaRecorder.ondataavailable = event => {
-        if (event.data.size > 0) {
-            recordedChunks.push(event.data);
-        }
-    };
-
-    mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunks, { type: mimeType || 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        recordedVideo.src = url;
-        downloadLink.href = url;
-        downloadLink.style.display = 'inline-block';
-        
-        // Revoke the old URL to free memory
-        if (recordedVideo.srcObject) {
-            URL.revokeObjectURL(recordedVideo.srcObject);
-        }
-    };
-
-    // Start recording with a timeslice of 1 second to prevent memory issues on long recordings
-    mediaRecorder.start(1000);
-    
-    startRecordBtn.disabled = true;
-    stopRecordBtn.disabled = false;
-    stopStreamBtn.disabled = true; // Prevent stopping stream while recording
-    
-    updateStatus('Grabando', 'status-recording');
-});
-
-stopRecordBtn.addEventListener('click', () => {
-    mediaRecorder.stop();
-    stopRecordBtn.disabled = true;
-    startRecordBtn.disabled = false;
-    stopStreamBtn.disabled = false; // Re-enable stop stream
-    
-    updateStatus('En Vivo', 'status-live');
-});
+    mediaRecorder.ondataavailable = e => {
+        if (event.data.size >
