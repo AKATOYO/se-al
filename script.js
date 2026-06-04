@@ -130,12 +130,17 @@ generateLinkBtn.addEventListener('click', async () => {
     if (!peerConnection) initPeerConnection();
 
     try {
+        // Limpiamos el área de texto antes de generar para evitar confusiones
+        connectionCode.value = "Generando código, por favor espera...";
+        copyLinkBtn.style.display = 'none';
+        
         // Creamos la oferta para conectarse
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        alert("🔑 Código generado! Copialo y envíalo a quien quieras que te vea.");
+        // El código se asignará automáticamente en el evento onicecandidate
     } catch (e) {
         alert("Error al generar el código: " + e.message);
+        connectionCode.value = "";
     }
 });
 
@@ -148,14 +153,10 @@ copyLinkBtn.addEventListener('click', () => {
 
 // Conectar usando un código recibido
 connectBtn.addEventListener('click', async () => {
-    // Clear textarea and prompt user to paste
-    connectionCode.value = '';
-    connectionCode.focus();
-    alert("⚠️ Pega el código que te enviaron en el cuadro de texto y presiona Aceptar.");
-    
+    // FIX: Read the value BEFORE clearing or prompting, allowing the user to paste first
     const codigoIngresado = connectionCode.value.trim();
     if (!codigoIngresado) {
-        alert("No se ingresó ningún código.");
+        alert("⚠️ Por favor, pega primero el código que te enviaron en el cuadro de texto y luego presiona este botón.");
         return;
     }
 
@@ -172,7 +173,8 @@ connectBtn.addEventListener('click', async () => {
         if (signal.type === 'offer') {
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            alert("🔄 Respuesta lista! Ahora copia el código nuevo que aparezca y envíaselo de vuelta.");
+            // FIX: Alert the user that the answer code will be generated in the textarea
+            alert("🔄 Respuesta lista! Ahora copia el código nuevo que aparece en el cuadro de texto y envíaselo de vuelta.");
         } else if (signal.type === 'answer') {
             alert("✅ Conexión establecida exitosamente.");
         }
@@ -205,7 +207,6 @@ startRecordBtn.addEventListener('click', () => {
         mediaRecorder = new MediaRecorder(localStream);
     }
 
-    // Fixed variable from 'event' to 'e'
     mediaRecorder.ondataavailable = e => {
         if (e.data && e.data.size > 0) {
             recordedChunks.push(e.data);
@@ -225,7 +226,6 @@ startRecordBtn.addEventListener('click', () => {
     stopRecordBtn.disabled = false;
 });
 
-// Added missing stop record button logic
 stopRecordBtn.addEventListener('click', () => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
