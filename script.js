@@ -66,7 +66,7 @@ stopStreamBtn.addEventListener('click', () => {
     if (peerConnection) peerConnection.close();
 
     // Detener grabación si está activa
-    if (mediaRecorder?.state === "recording") mediaRecorder.stop();
+    if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
 
     // Reiniciar todo
     peerConnection = null;
@@ -101,6 +101,15 @@ function initPeerConnection() {
             remoteVideo.srcObject = event.streams[0];
             remoteStatus.textContent = "✅ CONECTADO";
             remoteStatus.classList.add('connected');
+        }
+    };
+
+    // Manejo de desconexión
+    peerConnection.oniceconnectionstatechange = () => {
+        if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
+            remoteVideo.srcObject = null;
+            remoteStatus.textContent = "Desconectado";
+            remoteStatus.classList.remove('connected');
         }
     };
 
@@ -139,9 +148,14 @@ copyLinkBtn.addEventListener('click', () => {
 
 // Conectar usando un código recibido
 connectBtn.addEventListener('click', async () => {
+    // Clear textarea and prompt user to paste
+    connectionCode.value = '';
+    connectionCode.focus();
+    alert("⚠️ Pega el código que te enviaron en el cuadro de texto y presiona Aceptar.");
+    
     const codigoIngresado = connectionCode.value.trim();
     if (!codigoIngresado) {
-        alert("⚠️ Pega primero el código que te enviaron.");
+        alert("No se ingresó ningún código.");
         return;
     }
 
@@ -159,6 +173,8 @@ connectBtn.addEventListener('click', async () => {
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             alert("🔄 Respuesta lista! Ahora copia el código nuevo que aparezca y envíaselo de vuelta.");
+        } else if (signal.type === 'answer') {
+            alert("✅ Conexión establecida exitosamente.");
         }
 
     } catch (e) {
@@ -168,7 +184,7 @@ connectBtn.addEventListener('click', async () => {
 });
 
 // ==============================================
-// LÓGICA DE GRABACIÓN
+// LÓGICA DE GRABACIÓN (COMPLETADA Y CORREGIDA)
 // ==============================================
 startRecordBtn.addEventListener('click', () => {
     recordedChunks = [];
@@ -176,13 +192,44 @@ startRecordBtn.addEventListener('click', () => {
 
     // Buscar códec compatible
     const tipos = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
-    for (let t of tipos) if (MediaRecorder.isTypeSupported(t)) options = { mimeType: t };
+    for (let t of tipos) {
+        if (MediaRecorder.isTypeSupported(t)) {
+            options = { mimeType: t };
+            break;
+        }
+    }
 
     try {
-        mediaRecorder = new MediaRecorder(localStream, options);
+        mediaRecorder = options ? new MediaRecorder(localStream, options) : new MediaRecorder(localStream);
     } catch (e) {
         mediaRecorder = new MediaRecorder(localStream);
     }
 
+    // Fixed variable from 'event' to 'e'
     mediaRecorder.ondataavailable = e => {
-        if (event.data.size >
+        if (e.data && e.data.size > 0) {
+            recordedChunks.push(e.data);
+        }
+    };
+
+    mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        recordedVideo.src = url;
+        downloadLink.href = url;
+        downloadLink.style.display = 'inline-block';
+    };
+
+    mediaRecorder.start(100); // Collect data every 100ms
+    startRecordBtn.disabled = true;
+    stopRecordBtn.disabled = false;
+});
+
+// Added missing stop record button logic
+stopRecordBtn.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        startRecordBtn.disabled = false;
+        stopRecordBtn.disabled = true;
+    }
+});
