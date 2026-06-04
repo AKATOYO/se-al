@@ -18,6 +18,7 @@ let localStream;
 let mediaRecorder;
 let recordedChunks = [];
 let peerConnection;
+let isInitiator = false; // Track if this peer created the offer
 
 // Servidores para conectar desde cualquier red
 const config = { 
@@ -64,6 +65,7 @@ stopStreamBtn.addEventListener('click', () => {
     if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
 
     peerConnection = null;
+    isInitiator = false;
     connectionCode.value = "";
     copyLinkBtn.style.display = 'none';
     remoteStatus.textContent = "Desconectado";
@@ -82,19 +84,16 @@ stopStreamBtn.addEventListener('click', () => {
 // ==============================================
 
 function initPeerConnection() {
-    // FIX: Prevent re-initializing if a connection already exists
     if (peerConnection) {
         peerConnection.close();
     }
     
     peerConnection = new RTCPeerConnection(config);
 
-    // Enviar mi video/audio al otro dispositivo
     if (localStream) {
         localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     }
 
-    // Recibir el video/audio del otro dispositivo
     peerConnection.ontrack = event => {
         if (event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
@@ -103,7 +102,6 @@ function initPeerConnection() {
         }
     };
 
-    // Manejo de desconexión
     peerConnection.oniceconnectionstatechange = () => {
         if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
             remoteVideo.srcObject = null;
@@ -111,25 +109,29 @@ function initPeerConnection() {
             remoteStatus.classList.remove('connected');
         }
     };
-
-    // FIX: Removed onicecandidate logic from here to avoid overwriting the user's pasted code.
-    // We will wait for ICE gathering to complete explicitly.
 }
 
-// Helper function to wait for ICE candidates to finish gathering
-function waitForIceGathering() {
-    return new Promise((resolve) => {
+// Helper function to wait for ICE candidates with a timeout
+function waitForIceGathering(timeout = 10000) {
+    return new Promise((resolve, reject) => {
         if (peerConnection.iceGatheringState === 'complete') {
             resolve();
-        } else {
-            const checkState = () => {
-                if (peerConnection.iceGatheringState === 'complete') {
-                    peerConnection.removeEventListener('icegatheringstatechange', checkState);
-                    resolve();
-                }
-            };
-            peerConnection.addEventListener('icegatheringstatechange', checkState);
+            return;
         }
+
+        let timer = setTimeout(() => {
+            peerConnection.removeEventListener('icegatheringstatechange', checkState);
+            reject(new Error("La recolección de candidatos ICE tardó demasiado. Verifica tu conexión a internet."));
+        }, timeout);
+
+        const checkState = () => {
+            if (peerConnection.iceGatheringState === 'complete') {
+                clearTimeout(timer);
+                peerConnection.removeEventListener('icegatheringstatechange', checkState);
+                resolve();
+            }
+        };
+        peerConnection.addEventListener('icegatheringstatechange', checkState);
     });
 }
 
@@ -137,18 +139,24 @@ function waitForIceGathering() {
 generateLinkBtn.addEventListener('click', async () => {
     if (!peerConnection) initPeerConnection();
 
+    // Prevent re-generating if already generated an offer
+    if (isInitiator && peerConnection.localDescription) {
+        alert("Ya has generado un código. Copialo y envíalo, o espera la respuesta.");
+        return;
+    }
+
     try {
+        generateLinkBtn.disabled = true;
+        connectBtn.disabled = true;
         connectionCode.value = "Generando código, por favor espera...";
         copyLinkBtn.style.display = 'none';
         
-        // Creamos la oferta para conectarse
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
+        isInitiator = true;
         
-        // FIX: Wait until all ICE candidates are gathered before generating the code
         await waitForIceGathering();
         
-        // Now it's safe to encode the full local description
         const connectionData = btoa(JSON.stringify(peerConnection.localDescription));
         connectionCode.value = connectionData;
         copyLinkBtn.style.display = 'inline-block';
@@ -156,6 +164,10 @@ generateLinkBtn.addEventListener('click', async () => {
     } catch (e) {
         alert("Error al generar el código: " + e.message);
         connectionCode.value = "";
+        isInitiator = false;
+    } finally {
+        generateLinkBtn.disabled = false;
+        connectBtn.disabled = false;
     }
 });
 
@@ -175,22 +187,24 @@ connectBtn.addEventListener('click', async () => {
     }
 
     try {
-        const signal = JSON.parse(atob(codigoIngresado));
+        // Validate Base64 before parsing
+        const decoded = atob(codigoIngresado);
+        const signal = JSON.parse(decoded);
 
         if (!peerConnection) initPeerConnection();
 
-        // Enviamos nuestros datos al otro dispositivo
+        generateLinkBtn.disabled = true;
+        connectBtn.disabled = true;
+        connectBtn.textContent = "Conectando...";
+
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
 
-        // Si lo que recibimos es una petición, generamos nuestra respuesta automáticamente
         if (signal.type === 'offer') {
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             
-            // FIX: Wait for ICE gathering to complete for the answer
             await waitForIceGathering();
             
-            // FIX: Generate the answer code and display it safely
             const answerData = btoa(JSON.stringify(peerConnection.localDescription));
             connectionCode.value = answerData;
             copyLinkBtn.style.display = 'inline-block';
@@ -201,8 +215,12 @@ connectBtn.addEventListener('click', async () => {
         }
 
     } catch (e) {
-        alert("❌ Código inválido o error al conectar. Verifica que sea el texto correcto.");
+        alert("❌ Código inválido o error al conectar. Verifica que sea el texto correcto y que no tenga espacios extra.");
         console.error(e);
+    } finally {
+        generateLinkBtn.disabled = false;
+        connectBtn.disabled = false;
+        connectBtn.textContent = "Conectar con este Código";
     }
 });
 
@@ -235,6 +253,12 @@ startRecordBtn.addEventListener('click', () => {
 
     mediaRecorder.onstop = () => {
         const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        
+        // Free memory from previous recordings
+        if (downloadLink.href.startsWith('blob:')) {
+            URL.revokeObjectURL(downloadLink.href);
+        }
+        
         const url = URL.createObjectURL(blob);
         recordedVideo.src = url;
         downloadLink.href = url;
