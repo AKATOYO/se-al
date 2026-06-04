@@ -33,7 +33,6 @@ const config = {
 // ==============================================
 startStreamBtn.addEventListener('click', async () => {
     try {
-        // Obtener cámara y micrófono con buena calidad
         localStream = await navigator.mediaDevices.getUserMedia({ 
             video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
             audio: { echoCancellation: true, noiseSuppression: true } 
@@ -41,11 +40,10 @@ startStreamBtn.addEventListener('click', async () => {
         
         localVideo.srcObject = localStream;
         
-        // Habilitar botones
         startStreamBtn.disabled = true;
         stopStreamBtn.disabled = false;
         startRecordBtn.disabled = false;
-        generateLinkBtn.disabled = false; // Ya se puede generar código
+        generateLinkBtn.disabled = false; 
         connectBtn.disabled = false;
 
         initPeerConnection(); // Preparar conexión
@@ -57,25 +55,20 @@ startStreamBtn.addEventListener('click', async () => {
 });
 
 stopStreamBtn.addEventListener('click', () => {
-    // Detener video y audio
     if (localStream) localStream.getTracks().forEach(track => track.stop());
     localVideo.srcObject = null;
     remoteVideo.srcObject = null;
 
-    // Cerrar conexión remota
     if (peerConnection) peerConnection.close();
 
-    // Detener grabación si está activa
     if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
 
-    // Reiniciar todo
     peerConnection = null;
     connectionCode.value = "";
     copyLinkBtn.style.display = 'none';
     remoteStatus.textContent = "Desconectado";
     remoteStatus.classList.remove('connected');
 
-    // Deshabilitar botones
     startStreamBtn.disabled = false;
     stopStreamBtn.disabled = true;
     startRecordBtn.disabled = true;
@@ -88,12 +81,18 @@ stopStreamBtn.addEventListener('click', () => {
 // 🔹 SISTEMA DE CONEXIÓN REMOTA (GENERAR LINK/CODIGO)
 // ==============================================
 
-// Inicializar la conexión WebRTC
 function initPeerConnection() {
+    // FIX: Prevent re-initializing if a connection already exists
+    if (peerConnection) {
+        peerConnection.close();
+    }
+    
     peerConnection = new RTCPeerConnection(config);
 
     // Enviar mi video/audio al otro dispositivo
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    if (localStream) {
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    }
 
     // Recibir el video/audio del otro dispositivo
     peerConnection.ontrack = event => {
@@ -113,16 +112,25 @@ function initPeerConnection() {
         }
     };
 
-    // Cuando se generan los datos para conectar
-    peerConnection.onicecandidate = event => {
-        // Cuando ya tenemos todos los datos necesarios
-        if (!event.candidate) {
-            // Convertimos los datos a texto codificado para que sea fácil de copiar/pegar
-            const connectionData = btoa(JSON.stringify(peerConnection.localDescription));
-            connectionCode.value = connectionData;
-            copyLinkBtn.style.display = 'inline-block'; // Mostrar botón de copiar
+    // FIX: Removed onicecandidate logic from here to avoid overwriting the user's pasted code.
+    // We will wait for ICE gathering to complete explicitly.
+}
+
+// Helper function to wait for ICE candidates to finish gathering
+function waitForIceGathering() {
+    return new Promise((resolve) => {
+        if (peerConnection.iceGatheringState === 'complete') {
+            resolve();
+        } else {
+            const checkState = () => {
+                if (peerConnection.iceGatheringState === 'complete') {
+                    peerConnection.removeEventListener('icegatheringstatechange', checkState);
+                    resolve();
+                }
+            };
+            peerConnection.addEventListener('icegatheringstatechange', checkState);
         }
-    };
+    });
 }
 
 // Generar el código de conexión
@@ -130,14 +138,21 @@ generateLinkBtn.addEventListener('click', async () => {
     if (!peerConnection) initPeerConnection();
 
     try {
-        // Limpiamos el área de texto antes de generar para evitar confusiones
         connectionCode.value = "Generando código, por favor espera...";
         copyLinkBtn.style.display = 'none';
         
         // Creamos la oferta para conectarse
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        // El código se asignará automáticamente en el evento onicecandidate
+        
+        // FIX: Wait until all ICE candidates are gathered before generating the code
+        await waitForIceGathering();
+        
+        // Now it's safe to encode the full local description
+        const connectionData = btoa(JSON.stringify(peerConnection.localDescription));
+        connectionCode.value = connectionData;
+        copyLinkBtn.style.display = 'inline-block';
+        
     } catch (e) {
         alert("Error al generar el código: " + e.message);
         connectionCode.value = "";
@@ -153,7 +168,6 @@ copyLinkBtn.addEventListener('click', () => {
 
 // Conectar usando un código recibido
 connectBtn.addEventListener('click', async () => {
-    // FIX: Read the value BEFORE clearing or prompting, allowing the user to paste first
     const codigoIngresado = connectionCode.value.trim();
     if (!codigoIngresado) {
         alert("⚠️ Por favor, pega primero el código que te enviaron en el cuadro de texto y luego presiona este botón.");
@@ -161,7 +175,6 @@ connectBtn.addEventListener('click', async () => {
     }
 
     try {
-        // Decodificamos el texto
         const signal = JSON.parse(atob(codigoIngresado));
 
         if (!peerConnection) initPeerConnection();
@@ -173,7 +186,15 @@ connectBtn.addEventListener('click', async () => {
         if (signal.type === 'offer') {
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
-            // FIX: Alert the user that the answer code will be generated in the textarea
+            
+            // FIX: Wait for ICE gathering to complete for the answer
+            await waitForIceGathering();
+            
+            // FIX: Generate the answer code and display it safely
+            const answerData = btoa(JSON.stringify(peerConnection.localDescription));
+            connectionCode.value = answerData;
+            copyLinkBtn.style.display = 'inline-block';
+            
             alert("🔄 Respuesta lista! Ahora copia el código nuevo que aparece en el cuadro de texto y envíaselo de vuelta.");
         } else if (signal.type === 'answer') {
             alert("✅ Conexión establecida exitosamente.");
@@ -192,7 +213,6 @@ startRecordBtn.addEventListener('click', () => {
     recordedChunks = [];
     let options;
 
-    // Buscar códec compatible
     const tipos = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     for (let t of tipos) {
         if (MediaRecorder.isTypeSupported(t)) {
@@ -221,7 +241,7 @@ startRecordBtn.addEventListener('click', () => {
         downloadLink.style.display = 'inline-block';
     };
 
-    mediaRecorder.start(100); // Collect data every 100ms
+    mediaRecorder.start(100); 
     startRecordBtn.disabled = true;
     stopRecordBtn.disabled = false;
 });
