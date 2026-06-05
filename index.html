@@ -2,7 +2,8 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Ensure proper scaling on mobile devices -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Prensa Alternativa - Transmisión en Vivo</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -17,6 +18,8 @@
             <div class="video-wrapper">
                 <h2>Tu Señal (Local)</h2>
                 <video id="localVideo" autoplay muted playsinline></video>
+                <!-- Button to switch cameras on mobile -->
+                <button id="switchCameraBtn" style="display:none;">Cambiar Cámara</button>
             </div>
             <div class="video-wrapper">
                 <h2>Señal Recibida (Remoto)</h2>
@@ -32,30 +35,35 @@
             <button id="stopRecordBtn" disabled>Detener Grabación</button>
         </section>
 
-        <!-- 🔹 SECCIÓN DE CONEXIÓN REMOTA - COMPLETA 🔹 -->
+        <!-- 🔹 SECCIÓN DE CONEXIÓN REMOTA - MEJORADA 🔹 -->
         <section class="connection-section">
             <h3>🔗 Conexión Remota</h3>
             <div class="connection-box">
-                <button id="generateLinkBtn" disabled>Generar Código de Conexión</button>
-                <button id="copyLinkBtn" style="display:none;">Copiar Código</button>
+                <div class="step">
+                    <label>Paso 1: Genera tu código y envíalo</label>
+                    <button id="generateLinkBtn" disabled>Generar Código</button>
+                    <button id="copyLinkBtn" style="display:none;">Copiar Código</button>
+                </div>
                 
-                <!-- Removed readonly attribute to allow pasting -->
-                <textarea 
-                    id="connectionCode" 
-                    placeholder="Aquí aparecerá tu código, o pega el código de la otra persona aquí..." 
-                    rows="5"
-                ></textarea>
-
-                <button id="connectBtn" disabled>Conectar con este Código</button>
+                <div class="step">
+                    <label>Paso 2: Pega el código recibido y conecta</label>
+                    <textarea 
+                        id="connectionCode" 
+                        placeholder="Aquí aparecerá tu código, o pega el código de la otra persona aquí..." 
+                        rows="4"
+                    ></textarea>
+                    <button id="connectBtn" disabled>Conectar con este Código</button>
+                </div>
+                
                 <p class="info-text">
-                    <small>Copia el código generado, envíalo a la otra persona y pega aquí el código que te envíen ellos para conectarse.</small>
+                    <small>Nota: Copia el código generado, envíalo a la otra persona por chat/correo, y pega aquí el código que ellos te envíen.</small>
                 </p>
             </div>
         </section>
 
         <section class="recording-output">
             <h2>Grabación Guardada</h2>
-            <video id="recordedVideo" controls></video>
+            <video id="recordedVideo" controls playsinline></video>
             <a id="downloadLink" download="prensa_alternativa.webm" style="display: none;">📥 Descargar Grabación</a>
         </section>
     </main>
