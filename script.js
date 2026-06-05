@@ -18,7 +18,7 @@ let localStream;
 let mediaRecorder;
 let recordedChunks = [];
 let peerConnection;
-let isInitiator = false; // Track if this peer created the offer
+let isInitiator = false; 
 
 // Servidores para conectar desde cualquier red
 const config = { 
@@ -34,12 +34,19 @@ const config = {
 // ==============================================
 startStreamBtn.addEventListener('click', async () => {
     try {
+        // MEJORA: En móviles, se debe especificar facingMode para elegir la cámara trasera o frontal
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+            video: { 
+                width: { ideal: 1280 }, 
+                height: { ideal: 720 },
+                facingMode: 'user' // Usa 'environment' para cámara trasera
+            }, 
             audio: { echoCancellation: true, noiseSuppression: true } 
         });
         
         localVideo.srcObject = localStream;
+        // MEJORA: Requerido para reproducción en navegadores móviles iOS/Safari
+        localVideo.play().catch(e => console.error("Error playing local video:", e));
         
         startStreamBtn.disabled = true;
         stopStreamBtn.disabled = false;
@@ -47,7 +54,7 @@ startStreamBtn.addEventListener('click', async () => {
         generateLinkBtn.disabled = false; 
         connectBtn.disabled = false;
 
-        initPeerConnection(); // Preparar conexión
+        initPeerConnection(); 
 
     } catch (error) {
         console.error('Error:', error);
@@ -60,7 +67,13 @@ stopStreamBtn.addEventListener('click', () => {
     localVideo.srcObject = null;
     remoteVideo.srcObject = null;
 
-    if (peerConnection) peerConnection.close();
+    // MEJORA: Cerrar y limpiar la conexión peer correctamente para evitar fugas de memoria
+    if (peerConnection) {
+        peerConnection.ontrack = null;
+        peerConnection.oniceconnectionstatechange = null;
+        peerConnection.onicecandidate = null;
+        peerConnection.close();
+    }
 
     if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
 
@@ -85,6 +98,9 @@ stopStreamBtn.addEventListener('click', () => {
 
 function initPeerConnection() {
     if (peerConnection) {
+        peerConnection.ontrack = null;
+        peerConnection.oniceconnectionstatechange = null;
+        peerConnection.onicecandidate = null;
         peerConnection.close();
     }
     
@@ -95,8 +111,10 @@ function initPeerConnection() {
     }
 
     peerConnection.ontrack = event => {
-        if (event.streams[0]) {
+        if (event.streams && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
+            // MEJORA: Los navegadores móviles requieren play() explícito debido a las políticas de autoplay
+            remoteVideo.play().catch(e => console.error("Error playing remote video:", e));
             remoteStatus.textContent = "✅ CONECTADO";
             remoteStatus.classList.add('connected');
         }
@@ -107,6 +125,13 @@ function initPeerConnection() {
             remoteVideo.srcObject = null;
             remoteStatus.textContent = "Desconectado";
             remoteStatus.classList.remove('connected');
+        }
+    };
+
+    // MEJORA: Manejar candidatos ICE explícitamente para mayor estabilidad
+    peerConnection.onicecandidate = event => {
+        if (!event.candidate) {
+            // La recolección de ICE ha terminado
         }
     };
 }
@@ -139,7 +164,6 @@ function waitForIceGathering(timeout = 10000) {
 generateLinkBtn.addEventListener('click', async () => {
     if (!peerConnection) initPeerConnection();
 
-    // Prevent re-generating if already generated an offer
     if (isInitiator && peerConnection.localDescription) {
         alert("Ya has generado un código. Copialo y envíalo, o espera la respuesta.");
         return;
@@ -173,10 +197,21 @@ generateLinkBtn.addEventListener('click', async () => {
 
 // Copiar código al portapapeles
 copyLinkBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(connectionCode.value)
-        .then(() => alert("📋 Código copiado al portapapeles!"))
-        .catch(() => alert("No se pudo copiar, selecciónalo manualmente."));
+    // MEJORA: Fallback para navegadores móviles que no soportan clipboard API de forma segura
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(connectionCode.value)
+            .then(() => alert("📋 Código copiado al portapapeles!"))
+            .catch(() => fallbackCopy());
+    } else {
+        fallbackCopy();
+    }
 });
+
+function fallbackCopy() {
+    connectionCode.select();
+    document.execCommand('copy');
+    alert("📋 Código copiado al portapapeles!");
+}
 
 // Conectar usando un código recibido
 connectBtn.addEventListener('click', async () => {
@@ -187,7 +222,6 @@ connectBtn.addEventListener('click', async () => {
     }
 
     try {
-        // Validate Base64 before parsing
         const decoded = atob(codigoIngresado);
         const signal = JSON.parse(decoded);
 
@@ -196,6 +230,13 @@ connectBtn.addEventListener('click', async () => {
         generateLinkBtn.disabled = true;
         connectBtn.disabled = true;
         connectBtn.textContent = "Conectando...";
+
+        // MEJORA: Evitar conflicto de estados. Si ya somos el iniciador y recibimos otra oferta, reiniciamos la conexión.
+        if (isInitiator && signal.type === 'offer') {
+            peerConnection.close();
+            initPeerConnection();
+            isInitiator = false;
+        }
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
 
@@ -206,10 +247,11 @@ connectBtn.addEventListener('click', async () => {
             await waitForIceGathering();
             
             const answerData = btoa(JSON.stringify(peerConnection.localDescription));
+            // MEJORA: Se usa un alert para indicar que el código cambió, evitando que el usuario copie el código viejo por error
             connectionCode.value = answerData;
             copyLinkBtn.style.display = 'inline-block';
             
-            alert("🔄 Respuesta lista! Ahora copia el código nuevo que aparece en el cuadro de texto y envíaselo de vuelta.");
+            alert("🔄 Respuesta lista! Ahora copia el código NUEVO que aparece en el cuadro de texto y envíaselo de vuelta. NO uses el código anterior.");
         } else if (signal.type === 'answer') {
             alert("✅ Conexión establecida exitosamente.");
         }
@@ -254,13 +296,14 @@ startRecordBtn.addEventListener('click', () => {
     mediaRecorder.onstop = () => {
         const blob = new Blob(recordedChunks, { type: 'video/webm' });
         
-        // Free memory from previous recordings
         if (downloadLink.href.startsWith('blob:')) {
             URL.revokeObjectURL(downloadLink.href);
         }
         
         const url = URL.createObjectURL(blob);
         recordedVideo.src = url;
+        // MEJORA: Asegurar reproducción en móvil
+        recordedVideo.play().catch(e => console.error(e));
         downloadLink.href = url;
         downloadLink.style.display = 'inline-block';
     };
