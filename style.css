@@ -1,3 +1,4 @@
+/* Basic Reset */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -5,219 +6,182 @@
 }
 
 body {
-    font-family: 'Courier New', Courier, monospace;
-    background-color: #1a1a1a;
-    color: #e0e0e0;
-    line-height: 1.6;
+    font-family: system-ui, -apple-system, sans-serif;
+    background-color: #121212;
+    color: #ffffff;
+    line-height: 1.5;
 }
 
 header {
-    background-color: #b30000;
-    color: white;
     text-align: center;
-    padding: 1.2rem;
-    border-bottom: 4px solid #000;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-}
-
-header h1 {
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    font-size: 2rem;
-    margin-bottom: 0.3rem;
-}
-
-header p {
-    font-style: italic;
-    opacity: 0.9;
+    padding: 1rem;
+    background-color: #1e1e1e;
+    border-bottom: 2px solid #bb86fc;
 }
 
 main {
-    padding: 1.5rem;
     max-width: 1200px;
     margin: 0 auto;
+    padding: 1rem;
 }
 
+/* Responsive Grid for Videos */
 .stream-container {
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-    margin-bottom: 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* Side by side on PC */
+    gap: 1rem;
+    margin-bottom: 1.5rem;
 }
 
-@media (min-width: 768px) {
+/* Stack videos vertically on Mobile */
+@media (max-width: 768px) {
     .stream-container {
-        flex-direction: row;
+        grid-template-columns: 1fr;
     }
 }
 
 .video-wrapper {
-    flex: 1;
     background-color: #000;
-    border: 2px solid #333;
-    padding: 0.8rem;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    border-radius: 8px;
+    overflow: hidden;
     position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .video-wrapper h2 {
-    font-size: 1.1rem;
-    text-transform: uppercase;
-    border-bottom: 1px solid #555;
-    margin-bottom: 0.8rem;
-    color: #ffcc00;
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0,0,0,0.6);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    z-index: 10;
 }
 
 video {
     width: 100%;
-    background-color: #000;
-    border-radius: 4px;
-    display: block;
+    height: auto;
     min-height: 200px;
-    object-fit: cover;
+    background-color: #000;
+    display: block;
 }
 
 .status-indicator {
     position: absolute;
-    top: 1rem;
-    right: 1rem;
-    background: rgba(0,0,0,0.7);
-    color: #ff4444;
-    padding: 0.3rem 0.6rem;
-    border-radius: 3px;
+    bottom: 10px;
+    right: 10px;
+    background: red;
+    padding: 4px 8px;
+    border-radius: 4px;
     font-size: 0.8rem;
     font-weight: bold;
-    transition: all 0.3s;
 }
 
 .status-indicator.connected {
-    color: #00ff44;
-    background: rgba(0, 100, 0, 0.7);
+    background: #03dac6;
+    color: #000;
 }
 
+/* Controls */
 .controls {
     display: flex;
-    justify-content: center;
-    gap: 1rem;
-    margin: 1.5rem 0;
     flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    justify-content: center;
 }
 
 button {
-    background-color: #333;
-    color: white;
-    border: 2px solid #ffcc00;
-    padding: 0.8rem 1.6rem;
-    font-family: 'Courier New', Courier, monospace;
-    font-weight: bold;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    border-radius: 4px;
-    font-size: 0.9rem;
-}
-
-button:hover:not(:disabled) {
-    background-color: #ffcc00;
+    background-color: #bb86fc;
     color: #000;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(255, 204, 0, 0.3);
+    border: none;
+    padding: 0.75rem 1.25rem;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+    width: 100%;
+    max-width: 200px;
 }
 
 button:disabled {
-    opacity: 0.4;
+    background-color: #555555;
+    color: #888888;
     cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
 }
 
-/* 🔹 ESTILOS PARA LA SECCIÓN DE CONEXIÓN 🔹 */
+button:not(:disabled):hover {
+    background-color: #9b61e2;
+}
+
+#switchCameraBtn {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    z-index: 10;
+    width: auto;
+    max-width: none;
+    padding: 0.5rem;
+    font-size: 0.8rem;
+}
+
+/* Connection Section */
 .connection-section {
-    background-color: #222;
+    background-color: #1e1e1e;
     padding: 1.5rem;
-    border-radius: 6px;
-    margin: 1.5rem 0;
-    border: 1px solid #444;
-}
-
-.connection-section h3 {
-    color: #ffcc00;
-    margin-bottom: 1rem;
-    text-transform: uppercase;
-    text-align: center;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
 }
 
 .connection-box {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    align-items: center;
+    gap: 1.5rem;
 }
 
-@media (min-width: 768px) {
-    .connection-box {
-        flex-direction: row;
-        flex-wrap: wrap;
-        justify-content: center;
-    }
-    #connectionCode {
-        width: 100%;
-    }
+.step {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
-#connectionCode {
+.step label {
+    font-weight: bold;
+    color: #bb86fc;
+}
+
+textarea {
     width: 100%;
-    max-width: 600px;
-    background-color: #1a1a1a;
-    color: #00ff44;
-    border: 1px solid #555;
-    padding: 1rem;
+    padding: 0.75rem;
     border-radius: 4px;
+    border: 1px solid #333;
+    background-color: #2c2c2c;
+    color: #fff;
     font-family: monospace;
-    font-size: 0.85rem;
-    resize: none;
+    resize: vertical;
 }
 
 .info-text {
-    width: 100%;
-    text-align: center;
-    color: #aaa;
     margin-top: 0.5rem;
+    color: #aaa;
 }
 
+/* Recording Output */
 .recording-output {
-    margin-top: 2rem;
     text-align: center;
-    border-top: 2px dashed #555;
-    padding-top: 2rem;
-}
-
-.recording-output h2 {
-    color: #ffcc00;
-    text-transform: uppercase;
-    margin-bottom: 1.2rem;
-}
-
-#recordedVideo {
-    max-width: 700px;
-    margin: 0 auto 1rem auto;
-    display: block;
-    border: 2px solid #333;
-    border-radius: 6px;
+    margin-bottom: 2rem;
 }
 
 #downloadLink {
     display: inline-block;
-    background-color: #0066cc;
-    color: white;
-    padding: 0.7rem 1.4rem;
-    text-decoration: none;
-    border-radius: 4px;
-    transition: background 0.3s;
+    margin-top: 1rem;
+    color: #bb86fc;
     font-weight: bold;
+    text-decoration: none;
 }
 
 #downloadLink:hover {
-    background-color: #0088ff;
+    text-decoration: underline;
 }
