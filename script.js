@@ -7,8 +7,8 @@ const startRecordBtn = document.getElementById('startRecordBtn');
 const stopRecordBtn = document.getElementById('stopRecordBtn');
 const recordedVideo = document.getElementById('recordedVideo');
 const downloadLink = document.getElementById('downloadLink');
+const switchCameraBtn = document.getElementById('switchCameraBtn');
 
-// Elementos NUEVOS para conexión remota
 const generateLinkBtn = document.getElementById('generateLinkBtn');
 const copyLinkBtn = document.getElementById('copyLinkBtn');
 const connectionCode = document.getElementById('connectionCode');
@@ -18,9 +18,9 @@ let localStream;
 let mediaRecorder;
 let recordedChunks = [];
 let peerConnection;
-let isInitiator = false; 
+let isInitiator = false;
+let currentFacingMode = 'user'; // 'user' for front, 'environment' for back
 
-// Servidores para conectar desde cualquier red
 const config = { 
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -32,22 +32,44 @@ const config = {
 // ==============================================
 // LÓGICA PRINCIPAL DE TRANSMISIÓN
 // ==============================================
+
+async function getMediaStream(facingMode) {
+    // Stop existing tracks to prevent multiple cameras open on mobile
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+    }
+
+    const constraints = {
+        video: { 
+            width: { ideal: 1280 }, 
+            height: { ideal: 720 },
+            facingMode: facingMode 
+        }, 
+        audio: { echoCancellation: true, noiseSuppression: true } 
+    };
+
+    localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    localVideo.srcObject = localStream;
+    
+    // Explicit play required for iOS/Safari
+    try {
+        await localVideo.play();
+    } catch (e) {
+        console.error("Error playing local video:", e);
+    }
+}
+
 startStreamBtn.addEventListener('click', async () => {
     try {
-        // MEJORA: En móviles, se debe especificar facingMode para elegir la cámara trasera o frontal
-        localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                width: { ideal: 1280 }, 
-                height: { ideal: 720 },
-                facingMode: 'user' // Usa 'environment' para cámara trasera
-            }, 
-            audio: { echoCancellation: true, noiseSuppression: true } 
-        });
+        await getMediaStream(currentFacingMode);
         
-        localVideo.srcObject = localStream;
-        // MEJORA: Requerido para reproducción en navegadores móviles iOS/Safari
-        localVideo.play().catch(e => console.error("Error playing local video:", e));
-        
+        // Show camera switch button only if device has multiple cameras
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        if (videoDevices.length > 1) {
+            switchCameraBtn.style.display = 'block';
+        }
+
         startStreamBtn.disabled = true;
         stopStreamBtn.disabled = false;
         startRecordBtn.disabled = false;
@@ -58,7 +80,28 @@ startStreamBtn.addEventListener('click', async () => {
 
     } catch (error) {
         console.error('Error:', error);
-        alert('❌ No se pudo acceder a la cámara o micrófono. Revisa los permisos.');
+        alert('❌ No se pudo acceder a la cámara o micrófono. Revisa los permisos o asegúrate de usar HTTPS.');
+    }
+});
+
+// Switch Camera Logic for Mobile
+switchCameraBtn.addEventListener('click', async () => {
+    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    
+    try {
+        await getMediaStream(currentFacingMode);
+        
+        // Replace the track in the existing peer connection if connected
+        if (peerConnection) {
+            const videoTrack = localStream.getVideoTracks()[0];
+            const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+            if (sender) {
+                sender.replaceTrack(videoTrack);
+            }
+        }
+    } catch (error) {
+        alert('❌ No se pudo cambiar la cámara.');
+        currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user'; // Revert
     }
 });
 
@@ -67,7 +110,6 @@ stopStreamBtn.addEventListener('click', () => {
     localVideo.srcObject = null;
     remoteVideo.srcObject = null;
 
-    // MEJORA: Cerrar y limpiar la conexión peer correctamente para evitar fugas de memoria
     if (peerConnection) {
         peerConnection.ontrack = null;
         peerConnection.oniceconnectionstatechange = null;
@@ -81,6 +123,7 @@ stopStreamBtn.addEventListener('click', () => {
     isInitiator = false;
     connectionCode.value = "";
     copyLinkBtn.style.display = 'none';
+    switchCameraBtn.style.display = 'none';
     remoteStatus.textContent = "Desconectado";
     remoteStatus.classList.remove('connected');
 
@@ -93,7 +136,7 @@ stopStreamBtn.addEventListener('click', () => {
 });
 
 // ==============================================
-// 🔹 SISTEMA DE CONEXIÓN REMOTA (GENERAR LINK/CODIGO)
+// 🔹 SISTEMA DE CONEXIÓN REMOTA
 // ==============================================
 
 function initPeerConnection() {
@@ -113,7 +156,7 @@ function initPeerConnection() {
     peerConnection.ontrack = event => {
         if (event.streams && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
-            // MEJORA: Los navegadores móviles requieren play() explícito debido a las políticas de autoplay
+            // Explicit play required for mobile browsers
             remoteVideo.play().catch(e => console.error("Error playing remote video:", e));
             remoteStatus.textContent = "✅ CONECTADO";
             remoteStatus.classList.add('connected');
@@ -128,15 +171,13 @@ function initPeerConnection() {
         }
     };
 
-    // MEJORA: Manejar candidatos ICE explícitamente para mayor estabilidad
     peerConnection.onicecandidate = event => {
         if (!event.candidate) {
-            // La recolección de ICE ha terminado
+            // ICE gathering finished
         }
     };
 }
 
-// Helper function to wait for ICE candidates with a timeout
 function waitForIceGathering(timeout = 10000) {
     return new Promise((resolve, reject) => {
         if (peerConnection.iceGatheringState === 'complete') {
@@ -160,12 +201,11 @@ function waitForIceGathering(timeout = 10000) {
     });
 }
 
-// Generar el código de conexión
 generateLinkBtn.addEventListener('click', async () => {
     if (!peerConnection) initPeerConnection();
 
     if (isInitiator && peerConnection.localDescription) {
-        alert("Ya has generado un código. Copialo y envíalo, o espera la respuesta.");
+        alert("Ya has generado un código. Cópialo y envíalo, o espera la respuesta.");
         return;
     }
 
@@ -195,10 +235,8 @@ generateLinkBtn.addEventListener('click', async () => {
     }
 });
 
-// Copiar código al portapapeles
 copyLinkBtn.addEventListener('click', () => {
-    // MEJORA: Fallback para navegadores móviles que no soportan clipboard API de forma segura
-    if (navigator.clipboard && navigator.clipboard.writeText) {
+    if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(connectionCode.value)
             .then(() => alert("📋 Código copiado al portapapeles!"))
             .catch(() => fallbackCopy());
@@ -209,11 +247,20 @@ copyLinkBtn.addEventListener('click', () => {
 
 function fallbackCopy() {
     connectionCode.select();
+    connectionCode.setSelectionRange(0, 99999); // For mobile devices
     document.execCommand('copy');
     alert("📋 Código copiado al portapapeles!");
 }
 
-// Conectar usando un código recibido
+// Auto-clear textarea on focus for easier pasting on mobile
+connectionCode.addEventListener('focus', () => {
+    // Only clear if it's an outgoing code to prevent accidental deletion of incoming code
+    if (copyLinkBtn.style.display === 'inline-block') {
+        connectionCode.value = "";
+        copyLinkBtn.style.display = 'none';
+    }
+});
+
 connectBtn.addEventListener('click', async () => {
     const codigoIngresado = connectionCode.value.trim();
     if (!codigoIngresado) {
@@ -231,7 +278,6 @@ connectBtn.addEventListener('click', async () => {
         connectBtn.disabled = true;
         connectBtn.textContent = "Conectando...";
 
-        // MEJORA: Evitar conflicto de estados. Si ya somos el iniciador y recibimos otra oferta, reiniciamos la conexión.
         if (isInitiator && signal.type === 'offer') {
             peerConnection.close();
             initPeerConnection();
@@ -247,7 +293,6 @@ connectBtn.addEventListener('click', async () => {
             await waitForIceGathering();
             
             const answerData = btoa(JSON.stringify(peerConnection.localDescription));
-            // MEJORA: Se usa un alert para indicar que el código cambió, evitando que el usuario copie el código viejo por error
             connectionCode.value = answerData;
             copyLinkBtn.style.display = 'inline-block';
             
@@ -267,7 +312,7 @@ connectBtn.addEventListener('click', async () => {
 });
 
 // ==============================================
-// LÓGICA DE GRABACIÓN (COMPLETADA Y CORREGIDA)
+// LÓGICA DE GRABACIÓN
 // ==============================================
 startRecordBtn.addEventListener('click', () => {
     recordedChunks = [];
@@ -302,7 +347,6 @@ startRecordBtn.addEventListener('click', () => {
         
         const url = URL.createObjectURL(blob);
         recordedVideo.src = url;
-        // MEJORA: Asegurar reproducción en móvil
         recordedVideo.play().catch(e => console.error(e));
         downloadLink.href = url;
         downloadLink.style.display = 'inline-block';
