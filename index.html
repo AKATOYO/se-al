@@ -2,7 +2,6 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <!-- Ensure proper scaling on mobile devices -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Prensa Alternativa - Transmisión en Vivo</title>
     <link rel="stylesheet" href="style.css">
@@ -18,7 +17,6 @@
             <div class="video-wrapper">
                 <h2>Tu Señal (Local)</h2>
                 <video id="localVideo" autoplay muted playsinline></video>
-                <!-- Button to switch cameras on mobile -->
                 <button id="switchCameraBtn" style="display:none;">Cambiar Cámara</button>
             </div>
             <div class="video-wrapper">
@@ -35,18 +33,17 @@
             <button id="stopRecordBtn" disabled>Detener Grabación</button>
         </section>
 
-        <!-- 🔹 SECCIÓN DE CONEXIÓN REMOTA - MEJORADA 🔹 -->
         <section class="connection-section">
             <h3>🔗 Conexión Remota</h3>
             <div class="connection-box">
                 <div class="step">
-                    <label>Paso 1: Genera tu código y envíalo</label>
+                    <label for="generateLinkBtn">Paso 1: Genera tu código y envíalo</label>
                     <button id="generateLinkBtn" disabled>Generar Código</button>
                     <button id="copyLinkBtn" style="display:none;">Copiar Código</button>
                 </div>
                 
                 <div class="step">
-                    <label>Paso 2: Pega el código recibido y conecta</label>
+                    <label for="connectionCode">Paso 2: Pega el código recibido y conecta</label>
                     <textarea 
                         id="connectionCode" 
                         placeholder="Aquí aparecerá tu código, o pega el código de la otra persona aquí..." 
@@ -56,7 +53,7 @@
                 </div>
                 
                 <p class="info-text">
-                    <small>Nota: Copia el código generado, envíalo a la otra persona por chat/correo, y pega aquí el código que ellos te envíen.</small>
+                    <small>Nota: Copia el código generado, envíalo a la otra persona por chat/correo, y pega aquí el código que ellos te envíen de vuelta.</small>
                 </p>
             </div>
         </section>
@@ -64,7 +61,7 @@
         <section class="recording-output">
             <h2>Grabación Guardada</h2>
             <video id="recordedVideo" controls playsinline></video>
-            <a id="downloadLink" download="prensa_alternativa.webm" style="display: none;">📥 Descargar Grabación</a>
+            <a id="downloadLink" href="#" download="prensa_alternativa.webm" style="display: none;">📥 Descargar Grabación</a>
         </section>
     </main>
 
