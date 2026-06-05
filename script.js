@@ -14,12 +14,12 @@ const copyLinkBtn = document.getElementById('copyLinkBtn');
 const connectionCode = document.getElementById('connectionCode');
 const connectBtn = document.getElementById('connectBtn');
 
-let localStream;
-let mediaRecorder;
+let localStream = null;
+let mediaRecorder = null;
 let recordedChunks = [];
-let peerConnection;
+let peerConnection = null;
 let isInitiator = false;
-let currentFacingMode = 'user'; // 'user' for front, 'environment' for back
+let currentFacingMode = 'user';
 
 const config = { 
     iceServers: [
@@ -30,11 +30,48 @@ const config = {
 };
 
 // ==============================================
-// MAIN STREAMING LOGIC
+// 🎨 UI & STATE MANAGEMENT
+// ==============================================
+
+function updateMediaState() {
+    if (!localStream) return;
+    const videoTrack = localStream.getVideoTracks()[0];
+    const audioTrack = localStream.getAudioTracks()[0];
+    
+    // Aquí podrías actualizar iconos en el DOM si los tuvieras
+    console.log(`Camera: ${videoTrack?.enabled ? 'On' : 'Off'} | Mic: ${audioTrack?.enabled ? 'On' : 'Off'}`);
+}
+
+function updateUI(state) {
+    const isStreaming = state === 'streaming' || state === 'connected';
+    const isRecording = state === 'recording';
+
+    startStreamBtn.disabled = isStreaming;
+    stopStreamBtn.disabled = !isStreaming;
+    startRecordBtn.disabled = !isStreaming || isRecording;
+    stopRecordBtn.disabled = !isRecording;
+    generateLinkBtn.disabled = !isStreaming; 
+    connectBtn.disabled = !isStreaming;
+    switchCameraBtn.style.display = isStreaming ? 'block' : 'none';
+}
+
+function setConnectionStatus(connected) {
+    if (connected) {
+        remoteStatus.textContent = "✅ CONECTADO";
+        remoteStatus.classList.add('connected');
+        updateUI('connected');
+    } else {
+        remoteStatus.textContent = "Desconectado";
+        remoteStatus.classList.remove('connected');
+        if (localStream) updateUI('streaming');
+    }
+}
+
+// ==============================================
+// 🎥 MAIN STREAMING LOGIC
 // ==============================================
 
 async function getMediaStream(facingMode) {
-    // Stop existing tracks to free up the camera hardware
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
     }
@@ -48,9 +85,14 @@ async function getMediaStream(facingMode) {
         audio: { echoCancellation: true, noiseSuppression: true } 
     };
 
-    localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    localVideo.srcObject = localStream;
-    // Removed redundant localVideo.play(). The video element handles playback via srcObject natively.
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        localVideo.srcObject = localStream;
+        updateMediaState();
+    } catch (error) {
+        console.error('Error accessing media devices:', error);
+        throw error; // Propagate to handle in the click event
+    }
 }
 
 startStreamBtn.addEventListener('click', async () => {
@@ -63,18 +105,11 @@ startStreamBtn.addEventListener('click', async () => {
             switchCameraBtn.style.display = 'block';
         }
 
-        startStreamBtn.disabled = true;
-        stopStreamBtn.disabled = false;
-        startRecordBtn.disabled = false;
-        generateLinkBtn.disabled = false; 
-        connectBtn.disabled = false;
-
-        // Initialize connection and add current stream tracks
         initPeerConnection(); 
+        updateUI('streaming');
 
     } catch (error) {
-        console.error('Error:', error);
-        alert('❌ Could not access camera or microphone. Check permissions or ensure you are using HTTPS.');
+        alert('❌ No se pudo acceder a la cámara o micrófono. Revisa los permisos o asegúrate de usar HTTPS.');
     }
 });
 
@@ -84,71 +119,68 @@ switchCameraBtn.addEventListener('click', async () => {
     try {
         await getMediaStream(currentFacingMode);
         
-        // FIX: Safely replace track on existing peer connection
         if (peerConnection && peerConnection.connectionState !== 'closed') {
-            const videoTrack = localStream.getVideoTracks()[0];
+            const newVideoTrack = localStream.getVideoTracks()[0];
             const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender && videoTrack) {
-                await sender.replaceTrack(videoTrack);
+            
+            if (sender) {
+                await sender.replaceTrack(newVideoTrack); // Seamless track replacement
             } else {
-                // If sender doesn't exist (rare edge case), we might need to re-add
-                peerConnection.addTrack(videoTrack, localStream);
+                peerConnection.addTrack(newVideoTrack, localStream);
+                // Note: Adding a track requires renegotiation (createOffer/setLocalDescription)
+                // For simplicity, we assume sender exists. A production app would trigger renegotiation here.
             }
         }
     } catch (error) {
-        alert('❌ Could not switch camera.');
-        // Revert facing mode if switch failed
+        alert('❌ No se pudo cambiar la cámara.');
         currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user'; 
     }
 });
 
 stopStreamBtn.addEventListener('click', () => {
+    // Clean up streams
     if (localStream) localStream.getTracks().forEach(track => track.stop());
     localVideo.srcObject = null;
-    remoteVideo.srcObject = null;
+    
+    // Clean up remote & memory leaks
+    if (remoteVideo.srcObject) {
+        remoteVideo.srcObject.getTracks().forEach(t => t.stop());
+        remoteVideo.srcObject = null;
+    }
 
-    // FIX: Properly destroy PeerConnection
     destroyPeerConnection();
 
-    if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+    }
 
     isInitiator = false;
     connectionCode.value = "";
     copyLinkBtn.style.display = 'none';
-    switchCameraBtn.style.display = 'none';
-    remoteStatus.textContent = "Disconnected";
-    remoteStatus.classList.remove('connected');
-
-    startStreamBtn.disabled = false;
-    stopStreamBtn.disabled = true;
-    startRecordBtn.disabled = true;
-    stopRecordBtn.disabled = true;
-    generateLinkBtn.disabled = true;
-    connectBtn.disabled = true;
+    setConnectionStatus(false);
+    updateUI('stopped');
 });
 
 // ==============================================
-// 🔹 REMOTE CONNECTION SYSTEM
+// 🌐 WEBRTC CONNECTION SYSTEM
 // ==============================================
 
-// FIX: Separated destruction logic to ensure peerConnection is always set to null
 function destroyPeerConnection() {
     if (peerConnection) {
         peerConnection.ontrack = null;
         peerConnection.oniceconnectionstatechange = null;
         peerConnection.onicecandidate = null;
         peerConnection.close();
-        peerConnection = null; // Crucial: allow re-initialization
+        peerConnection = null;
     }
 }
 
 function initPeerConnection() {
-    // FIX: Only close if it exists and is closed, otherwise reuse or reset safely
     if (peerConnection && peerConnection.connectionState !== 'closed') {
         return; 
     }
     
-    destroyPeerConnection(); // Ensure clean state
+    destroyPeerConnection();
     peerConnection = new RTCPeerConnection(config);
 
     if (localStream) {
@@ -159,32 +191,27 @@ function initPeerConnection() {
         if (event.streams && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
             remoteVideo.play().catch(e => console.error("Error playing remote video:", e));
-            remoteStatus.textContent = "✅ CONNECTED";
-            remoteStatus.classList.add('connected');
+            setConnectionStatus(true);
         }
     };
 
     peerConnection.oniceconnectionstatechange = () => {
         if (!peerConnection) return;
-        if (peerConnection.iceConnectionState === 'disconnected' || peerConnection.iceConnectionState === 'failed') {
-            remoteVideo.srcObject = null;
-            remoteStatus.textContent = "Disconnected";
-            remoteStatus.classList.remove('connected');
+        const state = peerConnection.iceConnectionState;
+        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+            setConnectionStatus(false);
         }
     };
 }
 
 function waitForIceGathering(timeout = 10000) {
     return new Promise((resolve, reject) => {
-        if (!peerConnection) return reject(new Error("PeerConnection not initialized."));
-        if (peerConnection.iceGatheringState === 'complete') {
-            resolve();
-            return;
-        }
+        if (!peerConnection) return reject(new Error("PeerConnection no inicializado."));
+        if (peerConnection.iceGatheringState === 'complete') return resolve();
 
-        let timer = setTimeout(() => {
+        const timer = setTimeout(() => {
             peerConnection.removeEventListener('icegatheringstatechange', checkState);
-            reject(new Error("ICE gathering timed out."));
+            reject(new Error("La recolección de candidatos ICE tardó demasiado."));
         }, timeout);
 
         const checkState = () => {
@@ -199,17 +226,17 @@ function waitForIceGathering(timeout = 10000) {
 }
 
 generateLinkBtn.addEventListener('click', async () => {
-    initPeerConnection();
+    if (!peerConnection || peerConnection.connectionState === 'closed') initPeerConnection();
 
     if (isInitiator && peerConnection.localDescription) {
-        alert("You have already generated a code. Copy it and send it.");
+        alert("Ya has generado un código. Cópialo y envíalo.");
         return;
     }
 
     try {
         generateLinkBtn.disabled = true;
         connectBtn.disabled = true;
-        connectionCode.value = "Generating code, please wait...";
+        connectionCode.value = "Generando código, por favor espera...";
         copyLinkBtn.style.display = 'none';
         
         const offer = await peerConnection.createOffer();
@@ -223,19 +250,22 @@ generateLinkBtn.addEventListener('click', async () => {
         copyLinkBtn.style.display = 'inline-block';
         
     } catch (e) {
-        alert("Error generating code: " + e.message);
+        alert("Error al generar el código: " + e.message);
         connectionCode.value = "";
         isInitiator = false;
     } finally {
-        generateLinkBtn.disabled = false;
-        connectBtn.disabled = false;
+        if (localStream) {
+            generateLinkBtn.disabled = false;
+            connectBtn.disabled = false;
+        }
     }
 });
 
 copyLinkBtn.addEventListener('click', () => {
+    if (!connectionCode.value) return;
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(connectionCode.value)
-            .then(() => alert("📋 Code copied!"))
+            .then(() => alert("📋 Código copiado!"))
             .catch(() => fallbackCopy());
     } else {
         fallbackCopy();
@@ -244,33 +274,40 @@ copyLinkBtn.addEventListener('click', () => {
 
 function fallbackCopy() {
     connectionCode.select();
-    connectionCode.setSelectionRange(0, 99999); 
     document.execCommand('copy');
-    alert("📋 Code copied!");
+    alert("📋 Código copiado!");
 }
 
-// FIX: Removed the focus clear logic. It's annoying if a user clicks the textarea to paste.
-// Instead, we handle clearing when the connect button is explicitly clicked.
-
 connectBtn.addEventListener('click', async () => {
-    let codigoIngresado = connectionCode.value.trim();
+    const codigoIngresado = connectionCode.value.trim();
     if (!codigoIngresado) {
-        alert("⚠️ Please paste the code first.");
+        alert("⚠️ Por favor, pega primero el código.");
+        return;
+    }
+
+    let signal;
+    try {
+        const decoded = atob(codigoIngresado);
+        signal = JSON.parse(decoded);
+        
+        // Validación de seguridad: Evitar conectar con uno mismo
+        if (isInitiator && signal.type === 'offer') {
+            alert("⚠️ No puedes conectarte con tu propio código de oferta. Necesitas el código de la otra persona.");
+            return;
+        }
+    } catch (e) {
+        alert("❌ Código inválido o corrupto.");
         return;
     }
 
     try {
-        const decoded = atob(codigoIngresado);
-        const signal = JSON.parse(decoded);
-
-        initPeerConnection();
+        if (!peerConnection || peerConnection.connectionState === 'closed') initPeerConnection();
 
         generateLinkBtn.disabled = true;
         connectBtn.disabled = true;
-        const originalText = connectBtn.textContent;
-        connectBtn.textContent = "Connecting...";
+        connectBtn.textContent = "Conectando...";
 
-        // If I am the initiator and I receive an external offer, reset logic
+        // Si por alguna razón recibimos una oferta siendo iniciador, reiniciamos
         if (isInitiator && signal.type === 'offer') {
             destroyPeerConnection();
             initPeerConnection();
@@ -289,27 +326,30 @@ connectBtn.addEventListener('click', async () => {
             connectionCode.value = answerData;
             copyLinkBtn.style.display = 'inline-block';
             
-            alert("🔄 Answer ready! Send the NEW answer code to the primary sender.");
+            alert("🔄 ¡Respuesta lista! Envía el NUEVO código de respuesta al emisor primario.");
         } else if (signal.type === 'answer') {
-            alert("✅ Processing Answer. Connection in progress...");
+            // La conexión se establece automáticamente
         }
 
     } catch (e) {
-        alert("❌ Invalid code or pairing error.");
+        alert("❌ Error de emparejamiento WebRTC.");
         console.error(e);
+        setConnectionStatus(false);
     } finally {
-        generateLinkBtn.disabled = false;
-        connectBtn.disabled = false;
-        connectBtn.textContent = "Connect"; 
+        if (localStream) {
+            generateLinkBtn.disabled = false;
+            connectBtn.disabled = false;
+        }
+        connectBtn.textContent = "Conectar"; 
     }
 });
 
 // ==============================================
-// RECORDING LOGIC
+// ⏺️ RECORDING LOGIC
 // ==============================================
 startRecordBtn.addEventListener('click', () => {
     if (!localStream) {
-        alert("You must activate your camera first.");
+        alert("Primero debes activar tu cámara.");
         return;
     }
     recordedChunks = [];
@@ -338,7 +378,7 @@ startRecordBtn.addEventListener('click', () => {
     mediaRecorder.onstop = () => {
         const blob = new Blob(recordedChunks, { type: 'video/webm' });
         
-        // FIX: Revoke previous object URLs to prevent memory leaks
+        // Limpieza de memoria (Memory Leak Prevention)
         if (recordedVideo.src && recordedVideo.src.startsWith('blob:')) {
             URL.revokeObjectURL(recordedVideo.src);
         }
@@ -351,17 +391,16 @@ startRecordBtn.addEventListener('click', () => {
         recordedVideo.play().catch(e => console.error(e));
         downloadLink.href = url;
         downloadLink.style.display = 'inline-block';
+        recordedChunks = []; // Limpiar buffer
     };
 
     mediaRecorder.start(100); 
-    startRecordBtn.disabled = true;
-    stopRecordBtn.disabled = false;
+    updateUI('recording');
 });
 
 stopRecordBtn.addEventListener('click', () => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
-        startRecordBtn.disabled = false;
-        stopRecordBtn.disabled = true;
+        updateUI(localStream ? 'streaming' : 'stopped');
     }
 });
