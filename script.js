@@ -33,25 +33,21 @@ const config = {
 // 🎨 UI & STATE MANAGEMENT
 // ==============================================
 
-function updateMediaState() {
-    if (!localStream) return;
-    const videoTrack = localStream.getVideoTracks()[0];
-    const audioTrack = localStream.getAudioTracks()[0];
-    
-    // Aquí podrías actualizar iconos en el DOM si los tuvieras
-    console.log(`Camera: ${videoTrack?.enabled ? 'On' : 'Off'} | Mic: ${audioTrack?.enabled ? 'On' : 'Off'}`);
-}
-
-function updateUI(state) {
-    const isStreaming = state === 'streaming' || state === 'connected';
-    const isRecording = state === 'recording';
+// [FIX] La UI ahora lee el estado real de las conexiones, no depende de strings manuales
+function updateUI() {
+    const isStreaming = localStream && localStream.active;
+    const isRecording = mediaRecorder && mediaRecorder.state === 'recording';
+    const isConnected = peerConnection && (peerConnection.iceConnectionState === 'connected' || peerConnection.iceConnectionState === 'completed');
 
     startStreamBtn.disabled = isStreaming;
     stopStreamBtn.disabled = !isStreaming;
     startRecordBtn.disabled = !isStreaming || isRecording;
     stopRecordBtn.disabled = !isRecording;
-    generateLinkBtn.disabled = !isStreaming; 
-    connectBtn.disabled = !isStreaming;
+    
+    // Deshabilitar signaling si estamos grabando para evitar romper la conexión
+    generateLinkBtn.disabled = !isStreaming || isRecording; 
+    connectBtn.disabled = !isStreaming || isRecording;
+    
     switchCameraBtn.style.display = isStreaming ? 'block' : 'none';
 }
 
@@ -59,12 +55,11 @@ function setConnectionStatus(connected) {
     if (connected) {
         remoteStatus.textContent = "✅ CONECTADO";
         remoteStatus.classList.add('connected');
-        updateUI('connected');
     } else {
         remoteStatus.textContent = "Desconectado";
         remoteStatus.classList.remove('connected');
-        if (localStream) updateUI('streaming');
     }
+    updateUI();
 }
 
 // ==============================================
@@ -88,10 +83,14 @@ async function getMediaStream(facingMode) {
     try {
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
         localVideo.srcObject = localStream;
-        updateMediaState();
+        
+        // [FIX] CRUCIAL: Silenciar el video local para evitar eco/feedback del micrófono
+        localVideo.muted = true; 
+        
+        updateUI();
     } catch (error) {
         console.error('Error accessing media devices:', error);
-        throw error; // Propagate to handle in the click event
+        throw error;
     }
 }
 
@@ -106,10 +105,10 @@ startStreamBtn.addEventListener('click', async () => {
         }
 
         initPeerConnection(); 
-        updateUI('streaming');
+        updateUI();
 
     } catch (error) {
-        alert('❌ No se pudo acceder a la cámara o micrófono. Revisa los permisos o asegúrate de usar HTTPS.');
+        alert('❌ No se pudo acceder a la cámara o micrófono. Revisa los permisos o asegúrate de usar HTTPS / Localhost.');
     }
 });
 
@@ -124,11 +123,12 @@ switchCameraBtn.addEventListener('click', async () => {
             const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
             
             if (sender) {
-                await sender.replaceTrack(newVideoTrack); // Seamless track replacement
+                await sender.replaceTrack(newVideoTrack); // Cambio fluido sin renegociación
             } else {
+                // [FIX] Si no hay sender, lo agregamos. En una app real avanzada esto requeriría 
+                // crear un nuevo Offer, pero para este flujo básico es mejor reiniciar el peer
                 peerConnection.addTrack(newVideoTrack, localStream);
-                // Note: Adding a track requires renegotiation (createOffer/setLocalDescription)
-                // For simplicity, we assume sender exists. A production app would trigger renegotiation here.
+                console.warn("Se añadió un track nuevo. Se requeriría renegociación manual si la conexión ya estaba establecida.");
             }
         }
     } catch (error) {
@@ -138,11 +138,9 @@ switchCameraBtn.addEventListener('click', async () => {
 });
 
 stopStreamBtn.addEventListener('click', () => {
-    // Clean up streams
     if (localStream) localStream.getTracks().forEach(track => track.stop());
     localVideo.srcObject = null;
     
-    // Clean up remote & memory leaks
     if (remoteVideo.srcObject) {
         remoteVideo.srcObject.getTracks().forEach(t => t.stop());
         remoteVideo.srcObject = null;
@@ -158,7 +156,6 @@ stopStreamBtn.addEventListener('click', () => {
     connectionCode.value = "";
     copyLinkBtn.style.display = 'none';
     setConnectionStatus(false);
-    updateUI('stopped');
 });
 
 // ==============================================
@@ -198,7 +195,10 @@ function initPeerConnection() {
     peerConnection.oniceconnectionstatechange = () => {
         if (!peerConnection) return;
         const state = peerConnection.iceConnectionState;
-        if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        
+        if (state === 'connected' || state === 'completed') {
+            setConnectionStatus(true);
+        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
             setConnectionStatus(false);
         }
     };
@@ -211,7 +211,9 @@ function waitForIceGathering(timeout = 10000) {
 
         const timer = setTimeout(() => {
             peerConnection.removeEventListener('icegatheringstatechange', checkState);
-            reject(new Error("La recolección de candidatos ICE tardó demasiado."));
+            // [FIX] Si tarda mucho, resolvemos de todas formas con lo que tengamos (Trickle ICE parcial)
+            console.warn("ICE gathering timeout, proceeding with partial candidates.");
+            resolve(); 
         }, timeout);
 
         const checkState = () => {
@@ -229,7 +231,7 @@ generateLinkBtn.addEventListener('click', async () => {
     if (!peerConnection || peerConnection.connectionState === 'closed') initPeerConnection();
 
     if (isInitiator && peerConnection.localDescription) {
-        alert("Ya has generado un código. Cópialo y envíalo.");
+        alert("Ya has generado un código de Oferta. Cópialo y envíalo a la otra persona.");
         return;
     }
 
@@ -249,15 +251,15 @@ generateLinkBtn.addEventListener('click', async () => {
         connectionCode.value = connectionData;
         copyLinkBtn.style.display = 'inline-block';
         
+        // [FIX] UX: Avisar claramente qué hacer
+        alert("✅ Código de Oferta generado. Cópielo y envíelo a la otra persona."); 
+        
     } catch (e) {
         alert("Error al generar el código: " + e.message);
         connectionCode.value = "";
         isInitiator = false;
     } finally {
-        if (localStream) {
-            generateLinkBtn.disabled = false;
-            connectBtn.disabled = false;
-        }
+        updateUI();
     }
 });
 
@@ -265,7 +267,7 @@ copyLinkBtn.addEventListener('click', () => {
     if (!connectionCode.value) return;
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(connectionCode.value)
-            .then(() => alert("📋 Código copiado!"))
+            .then(() => alert("📋 Código copiado al portapapeles!"))
             .catch(() => fallbackCopy());
     } else {
         fallbackCopy();
@@ -281,7 +283,7 @@ function fallbackCopy() {
 connectBtn.addEventListener('click', async () => {
     const codigoIngresado = connectionCode.value.trim();
     if (!codigoIngresado) {
-        alert("⚠️ Por favor, pega primero el código.");
+        alert("⚠️ Por favor, pega primero el código en el campo de texto.");
         return;
     }
 
@@ -290,13 +292,16 @@ connectBtn.addEventListener('click', async () => {
         const decoded = atob(codigoIngresado);
         signal = JSON.parse(decoded);
         
-        // Validación de seguridad: Evitar conectar con uno mismo
         if (isInitiator && signal.type === 'offer') {
-            alert("⚠️ No puedes conectarte con tu propio código de oferta. Necesitas el código de la otra persona.");
+            alert("⚠️ Estás intentando usar tu propio código de Oferta. Necesitas que la OTRA persona te envíe su código de Respuesta.");
+            return;
+        }
+        if (!isInitiator && signal.type === 'answer') {
+            alert("⚠️ Estás intentando usar un código de Respuesta, pero tú no has generado una Oferta aún.");
             return;
         }
     } catch (e) {
-        alert("❌ Código inválido o corrupto.");
+        alert("❌ Código inválido o corrupto. Asegúrate de copiarlo completo.");
         return;
     }
 
@@ -305,18 +310,12 @@ connectBtn.addEventListener('click', async () => {
 
         generateLinkBtn.disabled = true;
         connectBtn.disabled = true;
-        connectBtn.textContent = "Conectando...";
-
-        // Si por alguna razón recibimos una oferta siendo iniciador, reiniciamos
-        if (isInitiator && signal.type === 'offer') {
-            destroyPeerConnection();
-            initPeerConnection();
-            isInitiator = false;
-        }
+        connectBtn.textContent = "Procesando...";
 
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
 
         if (signal.type === 'offer') {
+            // Somos el receptor
             const answer = await peerConnection.createAnswer();
             await peerConnection.setLocalDescription(answer);
             
@@ -326,21 +325,20 @@ connectBtn.addEventListener('click', async () => {
             connectionCode.value = answerData;
             copyLinkBtn.style.display = 'inline-block';
             
-            alert("🔄 ¡Respuesta lista! Envía el NUEVO código de respuesta al emisor primario.");
+            // [FIX] UX: Aviso crucial para que no se pierda el código
+            alert("🔄 ¡Respuesta generada! Tu código ha cambiado en el cuadro de texto. CóPIALO y envíalo de vuelta a la persona que te dio la Oferta.");
         } else if (signal.type === 'answer') {
-            // La conexión se establece automáticamente
+            // Somos el iniciador, la conexión se establece automáticamente
+            alert("✅ Código de respuesta aceptado. Conexión en curso...");
         }
 
     } catch (e) {
-        alert("❌ Error de emparejamiento WebRTC.");
+        alert("❌ Error de emparejamiento WebRTC: " + e.message);
         console.error(e);
         setConnectionStatus(false);
     } finally {
-        if (localStream) {
-            generateLinkBtn.disabled = false;
-            connectBtn.disabled = false;
-        }
         connectBtn.textContent = "Conectar"; 
+        updateUI();
     }
 });
 
@@ -389,18 +387,24 @@ startRecordBtn.addEventListener('click', () => {
         const url = URL.createObjectURL(blob);
         recordedVideo.src = url;
         recordedVideo.play().catch(e => console.error(e));
+        
         downloadLink.href = url;
+        // [FIX] Asegurar descarga y nombre de archivo correcto
+        downloadLink.download = `grabacion_${new Date().toISOString().slice(0,19)}.webm`; 
         downloadLink.style.display = 'inline-block';
-        recordedChunks = []; // Limpiar buffer
+        
+        recordedChunks = []; 
+        mediaRecorder = null; // [FIX] Limpiar referencia
+        updateUI();
     };
 
     mediaRecorder.start(100); 
-    updateUI('recording');
+    updateUI();
 });
 
 stopRecordBtn.addEventListener('click', () => {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
-        updateUI(localStream ? 'streaming' : 'stopped');
+        // updateUI se llamará automáticamente en el onstop
     }
 });
